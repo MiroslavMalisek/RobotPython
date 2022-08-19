@@ -1,0 +1,33 @@
+#!/bin/sh
+
+# get pyro pid:
+pyropid=$1
+shift
+
+if [ "$1" = "-g" ]
+then
+    shift
+fi
+if [ "$1" = "" ]
+then
+  world="line.world"
+else
+  world=$1
+fi
+
+# start Ros
+roscore &
+# get Ros pid
+ppid=$!
+
+# start up stage
+rosrun stage_ros stageros $world &
+# get Ros pid
+ppid2=$!
+
+# wait till pyro stops
+while ps --noheaders $pyropid; do sleep 1; done > /dev/null
+
+# then kill stage and Ros
+pkill -SIGINT stageros
+pkill -SIGINT roscore

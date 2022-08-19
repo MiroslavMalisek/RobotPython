@@ -1,0 +1,99 @@
+#!/usr/bin/python3
+
+"""
+A simple symbloic simulator for symbolic worlds
+like the VacuumCleanerWorld (after Russell and Norvig).
+"""
+ 
+import socketserver, socket, sys, threading, time, string
+import importlib
+try:
+        import pickle as pickle
+except:
+        import pickle
+
+def INIT(filename):
+    path = filename.split("/")
+    modulefile = path.pop() # module name
+    module = modulefile.split(".")[0]
+    search = "/".join(path)
+    oldpath = sys.path[:] # copy
+    sys.path.insert(0, search)
+    print("Attempting to import '%s'..." % module) 
+    newMod = importlib.import_module(module)
+    print("Loaded '%s'!" % newMod.__file__)
+    sys.path = oldpath
+    try:
+        newMod.INIT
+    except AttributeError:
+        raise ImportError("your program needs an INIT() function")
+    retval = newMod.INIT()
+    return retval
+
+class Server(socketserver.TCPServer):
+    def __init__(self, connection, handler, gui):
+        handler.gui = gui
+        handler.connection = connection
+        socketserver.TCPServer.__init__(self, connection, handler)
+                
+class Handler(socketserver.BaseRequestHandler):
+    def handle(self):
+        self.request.setblocking(0)
+        self.gui.done = 0
+        while not self.gui.done:
+            try:
+                request = self.request.recv(10240).decode().strip()
+                # print("Sim-RECV "+request)
+                sockname = self.request.getsockname()
+            except:
+                time.sleep(.01)
+                continue
+            try:
+                # retval will be pickled!
+                retval = self.gui.process(request, sockname)
+            except:
+                print("Sim-Error processing "+request+"-"+sockname)
+                continue
+            if request == "disconnect":
+                break
+            try:
+                # print("Sim-Sending ",pickle.loads(retval));
+                self.request.send(retval)
+            except: # broken pipe, etc
+                print("Sim-Error can't send ",pickle.loads(retval))
+                self.gui.done = 1
+        self.request.close()
+
+class Thread(threading.Thread):
+    def __init__(self, gui, port):
+        threading.Thread.__init__(self)
+        self.gui = gui
+        self.server = Server(('', port),  Handler, gui)
+        try:
+            self.server.socket.settimeout(1) # checks to see if need to quit
+            #self.server.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        except:
+            print("WARN: entering deadlock zone")
+
+    def run(self):
+        while not self.gui.quit:
+            self.server.handle_request()
+        self.gui.destroy()
+
+if __name__ == "__main__":
+    # argv can be -g for no graphics, too
+    pid = int(sys.argv[1])  # pid of Pyro. If it stops, so should sim
+    if sys.argv[2] == '-g':
+        worldFile = sys.argv[3] # "world" file
+    else:
+        worldFile = sys.argv[2] # "world" file        
+    if worldFile[-3:] != '.py':
+        worldFile += '.py'
+    gui = INIT(worldFile)
+    for port in gui.ports:
+        print("Simulator starting listener on port", port, "...")
+        thread = Thread(gui, port)
+        thread.start()
+    gui.mainloop()
+    #import profile
+    #profile.run('gui.mainloop()', 'pyrobotsim.profile')
